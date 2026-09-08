@@ -1,0 +1,257 @@
+import sys
+import os
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QPixmap, QTransform, QColor, QPainter, QFont
+from PyQt6.QtCore import Qt, QUrl, QRect, QTimer
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+class NoshulGame(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Побег от Панамаря: Definitive Edition")
+        self.showFullScreen()
+        
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.assets_path = os.path.join(self.base_path, 'assets')
+        
+        self.keys_pressed = set()
+        
+        self.media_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.media_player.setAudioOutput(self.audio_output)
+        music_path = os.path.join(self.assets_path, "music.mp3")
+        self.media_player.setSource(QUrl.fromLocalFile(music_path))
+        self.media_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self.audio_output.setVolume(1.0)
+        
+        self.music_enabled = True
+
+        self.load_assets()
+        
+        self.timer = QTimer(self)
+        
+        self.state = "START_MENU"
+        
+        self.btn_menu_rect = QRect(20, 20, 180, 50)
+        self.btn_exit_rect = QRect(220, 20, 180, 50)
+        
+        self.char_list = [
+            {"key": Qt.Key.Key_1, "name": "Макс", "img": self.img_max, "speed_mult": 1.0},
+            {"key": Qt.Key.Key_2, "name": "Саня", "img": self.img_sanya, "speed_mult": 1.0},
+            {"key": Qt.Key.Key_3, "name": "Глеб", "img": self.img_gleb, "speed_mult": 1.25},
+            {"key": Qt.Key.Key_4, "name": "Дима", "img": self.img_dima, "speed_mult": 1.0}
+        ]
+        self.characters = {c["key"]: c for c in self.char_list}
+        
+        self.diff_list = [
+            {"key": Qt.Key.Key_1, "name": "ЛАЙТ", "dist": 300, "speed": 10},
+            {"key": Qt.Key.Key_2, "name": "БАЗА", "dist": 500, "speed": 14},
+            {"key": Qt.Key.Key_3, "name": "ХАРДКОР", "dist": 800, "speed": 18},
+            {"key": Qt.Key.Key_4, "name": "КОШМАР", "dist": 1000, "speed": 22}
+        ]
+        self.difficulties = {d["key"]: d for d in self.diff_list}
+        self.d_data = self.diff_list[1] 
+        
+        self.reset_game()
+
+    def load_assets(self):
+        def load_pix(file_name, w=None, h=None):
+            path = os.path.join(self.assets_path, file_name)
+            pix = QPixmap(path)
+            if pix.isNull():
+                pix = QPixmap(100, 100)
+                pix.fill(QColor(60, 60, 60))
+            if w and h:
+                return pix.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            return pix
+
+        self.img_bg = load_pix("bg.jpg")
+        self.img_max = load_pix("max.png", 180, 240)
+        self.img_sanya = load_pix("sanya.png", 180, 240)
+        self.img_gleb = load_pix("gleb.png", 180, 240)
+        self.img_dima = load_pix("dima.png", 180, 240)
+        self.img_panamar = load_pix("panamar.png", 250, 330)
+        self.img_panamar_mirrored = self.img_panamar.transformed(QTransform().scale(-1, 1))
+        self.img_elk = load_pix("elk.png", 220, 220)
+        self.img_rock = load_pix("rock.png", 100, 100)
+        self.img_voda = load_pix("voda.png", 60, 100)
+
+    def reset_game(self):
+        self.ground_offset = 120
+        self.player_velocity = 0
+        self.panamar_velocity = 0
+        self.gravity = 1.4 
+        self.jump_power = -32
+        self.is_jumping = False
+        self.panamar_is_jumping = False
+        self.player_x = 500
+        self.panamar_x = -300 
+        
+        self.punishment_mode = False
+        
+        self.obstacles = []
+        self.spawn_cooldown = 0
+        self.panamar_bottles = 0 
+        self.rage_timer = 0
+        self.distance_traveled = 0
+        self.debuff_timer = 0
+        self.stumble_timer = 0
+        
+        self.base_speed = self.d_data["speed"]
+        self.target_dist = self.d_data["dist"]
+        
+        self.player_rect = QRect(0, 0, 140, 200)
+        self.panamar_rect = QRect(0, 0, 200, 300)
+
+    def toggle_music(self):
+        if self.music_enabled:
+            self.media_player.pause()
+            self.music_enabled = False
+        else:
+            if self.state == "PLAYING":
+                self.media_player.play()
+            self.music_enabled = True
+
+    # --- Новое в коммите 5: Весь блок методов рендеринга ---
+    def draw_ui_buttons(self, qp):
+        qp.setPen(Qt.GlobalColor.white)
+        qp.setBrush(QColor(50, 50, 50, 200))
+        qp.drawRoundedRect(self.btn_menu_rect, 10, 10)
+        qp.setFont(QFont("Verdana", 14, QFont.Weight.Bold))
+        qp.drawText(self.btn_menu_rect, Qt.AlignmentFlag.AlignCenter, "В МЕНЮ [B]")
+
+        qp.setBrush(QColor(150, 30, 30, 200))
+        qp.drawRoundedRect(self.btn_exit_rect, 10, 10)
+        qp.drawText(self.btn_exit_rect, Qt.AlignmentFlag.AlignCenter, "ВЫХОД [ESC]")
+        qp.setBrush(Qt.BrushStyle.NoBrush)
+
+    def paintEvent(self, event):
+        qp = QPainter(self)
+        qp.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        qp.drawPixmap(self.rect(), self.img_bg)
+        
+        if self.state == "START_MENU":
+            self.draw_start_menu(qp)
+        elif self.state == "DIFFICULTY_SELECT":
+            self.draw_diff_menu(qp)
+        elif self.state == "CHAR_SELECT":
+            self.draw_char_menu(qp)
+        elif self.state in ["PLAYING", "GAME_OVER", "WIN"]:
+            # Отрисовка сущностей на игровом поле
+            qp.drawPixmap(self.player_rect, self.p_data["img"])
+            
+            panamar_sprite = self.img_panamar_mirrored if self.punishment_mode else self.img_panamar
+            qp.drawPixmap(self.panamar_rect, panamar_sprite)
+            
+            if self.panamar_bottles >= 10:
+                qp.fillRect(self.panamar_rect, QColor(255, 0, 0, 80)) 
+                
+            for obs in self.obstacles:
+                qp.drawPixmap(obs['rect'], obs['img'])
+            
+            # Отрисовка верхнего HUD
+            qp.setPen(Qt.GlobalColor.white)
+            qp.setFont(QFont("Verdana", 20, QFont.Weight.Bold))
+            qp.drawText(50, 60, f"БОЕЦ: {self.p_data['name']} | СЛОЖНОСТЬ: {self.d_data['name']} | ДИСТАНЦИЯ: {int(self.distance_traveled)}/{self.target_dist} м")
+            
+            if self.punishment_mode:
+                qp.setPen(Qt.GlobalColor.red)
+                qp.drawText(50, 100, "БАЗА ДАННЫХ ПОВРЕЖДЕНА! ПАНАМАРЬ ВЗЛОМАЛ КОД!")
+            elif self.panamar_bottles >= 10:
+                qp.setPen(Qt.GlobalColor.red)
+                timeLeft = self.rage_timer // 60 + 1
+                qp.drawText(50, 100, f"ПАNAMАРЬ В ЯРОСТИ! ({timeLeft} сек)")
+            else:
+                qp.setPen(Qt.GlobalColor.white)
+                qp.drawText(50, 100, f"СВЯТОЙ ВОДЫ У ПАНАМАРЯ: {self.panamar_bottles}/10")
+            
+            # Экраны окончания сессии
+            if self.state == "GAME_OVER":
+                qp.fillRect(self.rect(), QColor(0, 0, 0, 200))
+                qp.setPen(Qt.GlobalColor.red)
+                if self.punishment_mode:
+                    qp.setFont(QFont("Impact", 65))
+                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, f"НЕ\nЭТО ТАК НЕ РАБОТАЕТ\nENTER или B - В МЕНЮ")
+                else:
+                    qp.setFont(QFont("Impact", 80))
+                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, f"СКРУЧЕН ПАНАМАРЕМ!\nENTER или B - В МЕНЮ")
+                self.draw_ui_buttons(qp)
+                    
+            elif self.state == "WIN":
+                qp.fillRect(self.rect(), QColor(0, 0, 0, 180))
+                qp.setPen(QColor("gold"))
+                qp.setFont(QFont("Impact", 70))
+                win_text = f"Это еще не конец.\nНу {self.p_data['name']}, погоди!"
+                qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, win_text)
+                self.draw_ui_buttons(qp)
+
+    def draw_start_menu(self, qp):
+        qp.fillRect(self.rect(), QColor(0, 0, 0, 170))
+        qp.setPen(Qt.GlobalColor.white)
+        qp.setFont(QFont("Impact", 95))
+        qp.drawText(0, 150, self.width(), 120, Qt.AlignmentFlag.AlignCenter, "НОШУЛЬ: ПОБЕГ")
+        
+        qp.setFont(QFont("Verdana", 28))
+        qp.drawText(0, 350, self.width(), 60, Qt.AlignmentFlag.AlignCenter, "Нажми [SPACE], чтобы начать")
+        
+        qp.setFont(QFont("Verdana", 18))
+        controls_y = self.height() - 250
+        qp.drawText(0, controls_y, self.width(), 40, Qt.AlignmentFlag.AlignCenter, "УПРАВЛЕНИЕ: WASD или СТРЕЛКИ | ПРЫЖОК: SPACE")
+        
+        music_status = "ВКЛ" if self.music_enabled else "ВЫКЛ"
+        qp.setPen(QColor("yellow") if self.music_enabled else QColor("gray"))
+        qp.drawText(0, controls_y + 50, self.width(), 40, Qt.AlignmentFlag.AlignCenter, f"МУЗЫКА [M]: {music_status}")
+        
+        qp.setPen(Qt.GlobalColor.gray)
+        qp.drawText(0, controls_y + 120, self.width(), 40, Qt.AlignmentFlag.AlignCenter, "ESC - ВЫХОД ИЗ ИГРЫ")
+
+    def draw_diff_menu(self, qp):
+        qp.fillRect(self.rect(), QColor(0, 0, 0, 190))
+        self.draw_ui_buttons(qp)
+        qp.setPen(Qt.GlobalColor.white)
+        qp.setFont(QFont("Impact", 70))
+        qp.drawText(0, 100, self.width(), 100, Qt.AlignmentFlag.AlignCenter, "ВЫБЕРИ СЛОЖНОСТЬ")
+        
+        start_y = 300
+        spacing = 100
+        for i, diff in enumerate(self.diff_list):
+            y = start_y + i * spacing
+            qp.setPen(QColor("yellow"))
+            qp.setFont(QFont("Impact", 45))
+            qp.drawText(0, y, self.width(), 60, Qt.AlignmentFlag.AlignCenter, f"[{i+1}] {diff['name']} ({diff['dist']} м, СК: {diff['speed']})")
+
+    def draw_char_menu(self, qp):
+        qp.fillRect(self.rect(), QColor(0, 0, 0, 190))
+        self.draw_ui_buttons(qp)
+        qp.setPen(Qt.GlobalColor.white)
+        qp.setFont(QFont("Impact", 70))
+        qp.drawText(0, 100, self.width(), 100, Qt.AlignmentFlag.AlignCenter, "ВЫБЕРИ БОЙЦА")
+        card_w, card_h = 300, 450
+        spacing = 60
+        start_x = (self.width() - (card_w * 4 + spacing * 3)) // 2
+        for i, char in enumerate(self.char_list):
+            x = start_x + i * (card_w + spacing)
+            y = 350
+            qp.setPen(QColor(255, 255, 255, 80))
+            qp.drawRect(x, y, card_w, card_h)
+            pix = char["img"].scaled(220, 300, Qt.AspectRatioMode.KeepAspectRatio)
+            qp.drawPixmap(x + (card_w - pix.width()) // 2, y + 40, pix)
+            qp.setPen(Qt.GlobalColor.white)
+            qp.setFont(QFont("Verdana", 22, QFont.Weight.Bold))
+            qp.drawText(x, y + 360, card_w, 40, Qt.AlignmentFlag.AlignCenter, char["name"])
+            qp.setPen(QColor("yellow"))
+            qp.drawText(x, y + 400, card_w, 40, Qt.AlignmentFlag.AlignCenter, f"Жми [{i+1}]")
+    # --------------------------------------------------------------------
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key.Key_Escape: 
+            self.close()
+        if key == Qt.Key.Key_M: 
+            self.toggle_music()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    ex = NoshulGame()
+    ex.show()
+    sys.exit(app.exec())

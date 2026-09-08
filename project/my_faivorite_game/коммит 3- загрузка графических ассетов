@@ -1,0 +1,85 @@
+import sys
+import os
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QPixmap, QTransform, QColor
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+class NoshulGame(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Побег от Панамаря: Definitive Edition")
+        self.showFullScreen()
+        
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.assets_path = os.path.join(self.base_path, 'assets')
+        
+        self.keys_pressed = set()
+        
+        self.media_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.media_player.setAudioOutput(self.audio_output)
+        music_path = os.path.join(self.assets_path, "music.mp3")
+        self.media_player.setSource(QUrl.fromLocalFile(music_path))
+        self.media_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self.audio_output.setVolume(1.0)
+        
+        self.music_enabled = True
+
+        # --- Новое в коммите 3: Вызов загрузки графики ---
+        self.load_assets()
+        # -------------------------------------------------
+        
+        self.state = "START_MENU"
+
+    # --- Новое в коммите 3: Метод загрузки ассетов ---
+    def load_assets(self):
+        def load_pix(file_name, w=None, h=None):
+            path = os.path.join(self.assets_path, file_name)
+            pix = QPixmap(path)
+            # Защита от отсутствия картинок
+            if pix.isNull():
+                pix = QPixmap(100, 100)
+                pix.fill(QColor(60, 60, 60))
+            if w and h:
+                return pix.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            return pix
+
+        # Загрузка заднего фона и спрайтов
+        self.img_bg = load_pix("bg.jpg")
+        self.img_max = load_pix("max.png", 180, 240)
+        self.img_sanya = load_pix("sanya.png", 180, 240)
+        self.img_gleb = load_pix("gleb.png", 180, 240)
+        self.img_dima = load_pix("dima.png", 180, 240)
+        
+        # Спрайт Панамаря и его зеркальная копия
+        self.img_panamar = load_pix("panamar.png", 250, 330)
+        self.img_panamar_mirrored = self.img_panamar.transformed(QTransform().scale(-1, 1))
+        
+        # Препятствия и бонусы
+        self.img_elk = load_pix("elk.png", 220, 220)
+        self.img_rock = load_pix("rock.png", 100, 100)
+        self.img_voda = load_pix("voda.png", 60, 100)
+    # -------------------------------------------------
+
+    def toggle_music(self):
+        if self.music_enabled:
+            self.media_player.pause()
+            self.music_enabled = False
+        else:
+            if self.state == "PLAYING":
+                self.media_player.play()
+            self.music_enabled = True
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key.Key_Escape: 
+            self.close()
+        if key == Qt.Key.Key_M: 
+            self.toggle_music()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    ex = NoshulGame()
+    ex.show()
+    sys.exit(app.exec())

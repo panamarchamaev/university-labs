@@ -1,0 +1,32 @@
+import sys
+import os
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtCore import Qt
+
+class NoshulGame(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Побег от Панамаря: Definitive Edition")
+        self.showFullScreen()
+        
+        # Определение путей к ассетам проекта
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.assets_path = os.path.join(self.base_path, 'assets')
+        
+        # Набор для отслеживания зажатых клавиш
+        self.keys_pressed = set()
+        
+        # Стартовое состояние приложения
+        self.state = "START_MENU"
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        # Выход из игры в любой момент на ESC
+        if key == Qt.Key.Key_Escape: 
+            self.close()
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    ex = NoshulGame()
+    ex.show()
+    sys.exit(app.exec())

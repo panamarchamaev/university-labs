@@ -1,0 +1,59 @@
+import sys
+import os
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+class NoshulGame(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Побег от Панамаря: Definitive Edition")
+        self.showFullScreen()
+        
+        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        self.assets_path = os.path.join(self.base_path, 'assets')
+        
+        self.keys_pressed = set()
+        
+        # --- Новое в коммите 2: Инициализация аудиосистемы ---
+        self.media_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.media_player.setAudioOutput(self.audio_output)
+        
+        # Настройка источника звука и бесконечного цикла
+        music_path = os.path.join(self.assets_path, "music.mp3")
+        self.media_player.setSource(QUrl.fromLocalFile(music_path))
+        self.media_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self.audio_output.setVolume(1.0)
+        
+        self.music_enabled = True
+        # -----------------------------------------------------
+        
+        self.state = "START_MENU"
+
+    # --- Новое в коммите 2: Метод переключения музыки ---
+    def toggle_music(self):
+        if self.music_enabled:
+            self.media_player.pause()
+            self.music_enabled = False
+        else:
+            if self.state == "PLAYING":
+                self.media_player.play()
+            self.music_enabled = True
+    # -----------------------------------------------------
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key.Key_Escape: 
+            self.close()
+            
+        # --- Новое в коммите 2: Обработка клавиши M ---
+        if key == Qt.Key.Key_M: 
+            self.toggle_music()
+        # -----------------------------------------------------
+
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    ex = NoshulGame()
+    ex.show()
+    sys.exit(app.exec())
