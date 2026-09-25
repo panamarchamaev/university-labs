@@ -12,7 +12,11 @@ class NoshulGame(QWidget):
         self.setWindowTitle("Догонялки")
         self.showFullScreen()
         
-        self.base_path = os.path.dirname(os.path.abspath(__file__))
+        # Поддержка работы как из .py, так и из .exe (PyInstaller)
+        if getattr(sys, 'frozen', False):
+            self.base_path = sys._MEIPASS
+        else:
+            self.base_path = os.path.dirname(os.path.abspath(__file__))
         self.assets_path = os.path.join(self.base_path, 'assets')
         
         self.keys_pressed = set()
@@ -45,11 +49,12 @@ class NoshulGame(QWidget):
         ]
         self.characters = {c["key"]: c for c in self.char_list}
         
+        # Настройки сложности
         self.diff_list = [
-            {"key": Qt.Key.Key_1, "name": "ЛАЙТ", "dist": 300, "speed": 10},
-            {"key": Qt.Key.Key_2, "name": "БАЗА", "dist": 500, "speed": 14},
-            {"key": Qt.Key.Key_3, "name": "ХАРДКОР", "dist": 800, "speed": 18},
-            {"key": Qt.Key.Key_4, "name": "КОШМАР", "dist": 1000, "speed": 22}
+            {"key": Qt.Key.Key_1, "name": "ЛАЙТ", "dist": 300, "speed": 10, "min_cd": 90, "max_cd": 140},
+            {"key": Qt.Key.Key_2, "name": "БАЗА", "dist": 500, "speed": 14, "min_cd": 60, "max_cd": 95},
+            {"key": Qt.Key.Key_3, "name": "ХАРДКОР", "dist": 800, "speed": 18, "min_cd": 40, "max_cd": 70},
+            {"key": Qt.Key.Key_4, "name": "КОШМАР", "dist": 1000, "speed": 22, "min_cd": 25, "max_cd": 45}
         ]
         self.difficulties = {d["key"]: d for d in self.diff_list}
         self.d_data = self.diff_list[1] 
@@ -95,6 +100,7 @@ class NoshulGame(QWidget):
         
         self.obstacles = []
         self.spawn_cooldown = 0
+        self.last_spawn_type = None  # Запоминаем тип последнего спавна
         self.panamar_bottles = 0 
         self.rage_timer = 0
         self.distance_traveled = 0
@@ -116,11 +122,9 @@ class NoshulGame(QWidget):
                 self.media_player.play()
             self.music_enabled = True
 
-    # --- Новое в коммите 7: Финальная реализация игрового движка обновления кадров ---
     def update_game(self):
         if self.state != "PLAYING": return
 
-        # Проверка триггера победы по дистанции
         if self.distance_traveled >= self.target_dist:
             self.state = "WIN"
             self.timer.stop()
@@ -130,6 +134,7 @@ class NoshulGame(QWidget):
         ground_line = self.height() - self.ground_offset
         speed_boost = self.distance_traveled / 400
         default_speed = (self.base_speed + speed_boost) * self.p_data["speed_mult"]
+        
         if self.panamar_x > self.player_x + self.player_rect.width() and not self.punishment_mode:
             self.punishment_mode = True
             self.panamar_x = self.player_x + 950 
@@ -161,7 +166,6 @@ class NoshulGame(QWidget):
             self.debuff_timer -= 1
             world_move_speed = default_speed * 0.5 
 
-        # Обработка горизонтального перемещения игрока
         if self.stumble_timer == 0:
             side_move = 12
             if Qt.Key.Key_Left in self.keys_pressed or Qt.Key.Key_A in self.keys_pressed:
@@ -170,13 +174,13 @@ class NoshulGame(QWidget):
                 self.player_x += side_move
         
         self.player_x = max(0, min(self.width() - 150, self.player_x))
+        
         self.panamar_x += (pan_speed - world_move_speed)
         if not self.punishment_mode and self.panamar_x < -400: 
             self.panamar_x = -400
             
         self.distance_traveled += world_move_speed / 40
 
-        # Физика вертикальной оси игрока (Гравитация)
         self.player_velocity += self.gravity
         py = self.player_rect.top() + self.player_velocity
         if py >= ground_line - self.player_rect.height():
@@ -184,6 +188,7 @@ class NoshulGame(QWidget):
             self.is_jumping = False
             self.player_velocity = 0
         self.player_rect.moveTo(int(self.player_x), int(py))
+
         self.panamar_velocity += self.gravity
         for obs in self.obstacles:
             if self.punishment_mode: break
@@ -202,17 +207,46 @@ class NoshulGame(QWidget):
             self.panamar_velocity = 0
         self.panamar_rect.moveTo(int(self.panamar_x), int(pny))
 
-        # Рандомизированный спавн препятствий
-        if self.spawn_cooldown > 0: self.spawn_cooldown -= 1
-        if self.spawn_cooldown <= 0 and random.random() < 0.04:
-            obj = random.choice(["rock", "elk", "voda"])
-            size = {"rock": (100, 100), "elk": (220, 220), "voda": (60, 100)}[obj]
-            img = {"rock": self.img_rock, "elk": self.img_elk, "voda": self.img_voda}[obj]
-            r = QRect(self.width() + 150, ground_line - size[1], size[0], size[1])
-            self.obstacles.append({'type': obj, 'rect': r, 'img': img})
-            self.spawn_cooldown = random.randint(25, 50) 
+        # === НОРМАЛИЗОВАННЫЙ СПАВН ПРЕПЯТСТВИЙ ===
+        if self.spawn_cooldown > 0:
+            self.spawn_cooldown -= 1
+            
+        if self.spawn_cooldown <= 0:
+            spawn_x = self.width() + 150
+            
+            # Проверка дистанции до ближайшего препятствия
+            min_gap = 450 if self.last_spawn_type == 'elk' else 300
+            can_spawn = True
+            for obs in self.obstacles:
+                if obs['rect'].right() > spawn_x - min_gap:
+                    can_spawn = False
+                    break
+            
+            if can_spawn:
+                # Исключаем спавн двух лосей подряд
+                available_objs = ["rock", "elk", "voda"]
+                if self.last_spawn_type == 'elk':
+                    available_objs.remove("elk")
+                
+                obj = random.choice(available_objs)
+                self.last_spawn_type = obj
+                
+                size = {"rock": (100, 100), "elk": (220, 220), "voda": (60, 100)}[obj]
+                img = {"rock": self.img_rock, "elk": self.img_elk, "voda": self.img_voda}[obj]
+                r = QRect(spawn_x, ground_line - size[1], size[0], size[1])
+                self.obstacles.append({'type': obj, 'rect': r, 'img': img})
+                
+                min_c = self.d_data.get("min_cd", 60)
+                max_c = self.d_data.get("max_cd", 95)
+                
+                # Задержка после лося увеличивается в 1.6 раза для удобного приземления
+                cd_mult = 1.6 if obj == 'elk' else 1.0
+                self.spawn_cooldown = int(random.randint(min_c, max_c) * cd_mult)
+
+        # Движение объектов и коллизии
         for obs in self.obstacles[:]:
             obs['rect'].moveLeft(int(obs['rect'].left() - world_move_speed))
+            
             if not self.punishment_mode and self.panamar_rect.intersects(obs['rect']) and obs['type'] == 'voda':
                 if self.panamar_bottles < 10: self.panamar_bottles += 1
                 self.obstacles.remove(obs)
@@ -228,7 +262,6 @@ class NoshulGame(QWidget):
                     self.stumble_timer = 60
                     self.obstacles.remove(obs)
 
-        # Вычисление условий Game Over (поимка игрока)
         is_caught = self.player_rect.intersects(self.panamar_rect)
         if self.punishment_mode and self.panamar_rect.left() <= self.player_rect.right():
             is_caught = True
@@ -239,7 +272,6 @@ class NoshulGame(QWidget):
             self.media_player.stop()
         
         self.update()
-    # -----------------------------------------------------------------------------
 
     def draw_ui_buttons(self, qp):
         qp.setPen(Qt.GlobalColor.white)
@@ -289,7 +321,7 @@ class NoshulGame(QWidget):
                 qp.drawText(50, 100, f"ПРЕСЛЕДОВАТЕЛЬ В ЯРОСТИ! ({timeLeft} сек)")
             else:
                 qp.setPen(Qt.GlobalColor.white)
-                qp.drawText(50, 100, f"СВЯТОЙ ВОДЫ У ПРЕСЛЕДОВАТЕЛЯ: {self.panamar_bottles}/10")
+                qp.drawText(50, 100, f"СВЯТАЯ ВОДА У ПРЕСЛЕДОВАТЕЛЯ: {self.panamar_bottles}/10")
             
             if self.state == "GAME_OVER":
                 qp.fillRect(self.rect(), QColor(0, 0, 0, 200))
@@ -297,10 +329,10 @@ class NoshulGame(QWidget):
                 
                 if self.punishment_mode:
                     qp.setFont(QFont("Impact", 65))
-                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, f"НЕ\nЭТО ТАК НЕ РАБОТАЕТ\nENTER или B - В МЕНЮ")
+                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "ЭТО ТАК НЕ РАБОТАЕТ!\nПРЕСЛЕДОВАТЕЛЬ ВАС СХВАТИЛ\nENTER или B — В МЕНЮ")
                 else:
                     qp.setFont(QFont("Impact", 80))
-                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, f"ТЕБЯ ПОЙМАЛИ!\nENTER или B - В МЕНЮ")
+                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "СКРУЧЕН ПРЕСЛЕДОВАТЕЛЕМ!\nENTER или B — В МЕНЮ")
                 
                 self.draw_ui_buttons(qp)
                     
@@ -308,7 +340,7 @@ class NoshulGame(QWidget):
                 qp.fillRect(self.rect(), QColor(0, 0, 0, 180))
                 qp.setPen(QColor("gold"))
                 qp.setFont(QFont("Impact", 70))
-                win_text = f"Это еще не конец.\nНу {self.p_data['name']}, погоди!"
+                win_text = f"ЭТО ЕЩЕ НЕ КОНЕЦ!\nНу {self.p_data['name']}, погоди!"
                 qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, win_text)
                 self.draw_ui_buttons(qp)
 
