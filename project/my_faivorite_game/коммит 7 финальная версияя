@@ -9,7 +9,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 class NoshulGame(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Побег от Панамаря: Definitive Edition")
+        self.setWindowTitle("Догонялки")
         self.showFullScreen()
         
         self.base_path = os.path.dirname(os.path.abspath(__file__))
@@ -130,8 +130,6 @@ class NoshulGame(QWidget):
         ground_line = self.height() - self.ground_offset
         speed_boost = self.distance_traveled / 400
         default_speed = (self.base_speed + speed_boost) * self.p_data["speed_mult"]
-        
-        # Защита от обгона: переход Панамаря в режим наказания
         if self.panamar_x > self.player_x + self.player_rect.width() and not self.punishment_mode:
             self.punishment_mode = True
             self.panamar_x = self.player_x + 950 
@@ -172,8 +170,6 @@ class NoshulGame(QWidget):
                 self.player_x += side_move
         
         self.player_x = max(0, min(self.width() - 150, self.player_x))
-        
-        # Рассчет относительного смещения Панамаря и счетчика пройденного пути
         self.panamar_x += (pan_speed - world_move_speed)
         if not self.punishment_mode and self.panamar_x < -400: 
             self.panamar_x = -400
@@ -188,8 +184,6 @@ class NoshulGame(QWidget):
             self.is_jumping = False
             self.player_velocity = 0
         self.player_rect.moveTo(int(self.player_x), int(py))
-
-        # ИИ Панамаря: автоматический прыжок через препятствия
         self.panamar_velocity += self.gravity
         for obs in self.obstacles:
             if self.punishment_mode: break
@@ -217,12 +211,8 @@ class NoshulGame(QWidget):
             r = QRect(self.width() + 150, ground_line - size[1], size[0], size[1])
             self.obstacles.append({'type': obj, 'rect': r, 'img': img})
             self.spawn_cooldown = random.randint(25, 50) 
-
-        # Обработка движения препятствий и коллизий
         for obs in self.obstacles[:]:
             obs['rect'].moveLeft(int(obs['rect'].left() - world_move_speed))
-            
-            # Сбор святой воды Панамарем
             if not self.punishment_mode and self.panamar_rect.intersects(obs['rect']) and obs['type'] == 'voda':
                 if self.panamar_bottles < 10: self.panamar_bottles += 1
                 self.obstacles.remove(obs)
@@ -292,14 +282,14 @@ class NoshulGame(QWidget):
             
             if self.punishment_mode:
                 qp.setPen(Qt.GlobalColor.red)
-                qp.drawText(50, 100, "БАЗА ДАННЫХ ПОВРЕЖДЕНА! ПАНАМАРЬ ВЗЛОМАЛ КОД!")
+                qp.drawText(50, 100, "РАЗВОРОТ!")
             elif self.panamar_bottles >= 10:
                 qp.setPen(Qt.GlobalColor.red)
                 timeLeft = self.rage_timer // 60 + 1
-                qp.drawText(50, 100, f"ПАNAMАРЬ В ЯРОСТИ! ({timeLeft} сек)")
+                qp.drawText(50, 100, f"ПРЕСЛЕДОВАТЕЛЬ В ЯРОСТИ! ({timeLeft} сек)")
             else:
                 qp.setPen(Qt.GlobalColor.white)
-                qp.drawText(50, 100, f"СВЯТОЙ ВОДЫ У ПАНАМАРЯ: {self.panamar_bottles}/10")
+                qp.drawText(50, 100, f"СВЯТОЙ ВОДЫ У ПРЕСЛЕДОВАТЕЛЯ: {self.panamar_bottles}/10")
             
             if self.state == "GAME_OVER":
                 qp.fillRect(self.rect(), QColor(0, 0, 0, 200))
@@ -310,7 +300,7 @@ class NoshulGame(QWidget):
                     qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, f"НЕ\nЭТО ТАК НЕ РАБОТАЕТ\nENTER или B - В МЕНЮ")
                 else:
                     qp.setFont(QFont("Impact", 80))
-                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, f"СКРУЧЕН ПАНАМАРЕМ!\nENTER или B - В МЕНЮ")
+                    qp.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, f"ТЕБЯ ПОЙМАЛИ!\nENTER или B - В МЕНЮ")
                 
                 self.draw_ui_buttons(qp)
                     
@@ -326,7 +316,7 @@ class NoshulGame(QWidget):
         qp.fillRect(self.rect(), QColor(0, 0, 0, 170))
         qp.setPen(Qt.GlobalColor.white)
         qp.setFont(QFont("Impact", 95))
-        qp.drawText(0, 150, self.width(), 120, Qt.AlignmentFlag.AlignCenter, "НОШУЛЬ: ПОБЕГ")
+        qp.drawText(0, 150, self.width(), 120, Qt.AlignmentFlag.AlignCenter, "ДОГОНЯЛКИ")
         
         qp.setFont(QFont("Verdana", 28))
         qp.drawText(0, 350, self.width(), 60, Qt.AlignmentFlag.AlignCenter, "Нажми [SPACE], чтобы начать")
